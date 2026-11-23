@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#05060f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Loves Me">
+<title>Loves me, loves me not</title>
+<style>
+:root{--bg:#05060f;--ink:#dfe6ff;--line:rgba(255,255,255,.18);--btn:rgba(30,34,70,.8);--accent:#ff8fc0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:'Courier New',ui-monospace,monospace;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent}
+#app{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:env(safe-area-inset-top,0px) 12px env(safe-area-inset-bottom,0px)}
+canvas{image-rendering:pixelated;image-rendering:crisp-edges;border-radius:4px;box-shadow:0 0 0 2px #2a3a8a,0 0 40px rgba(60,80,220,.35);touch-action:manipulation;cursor:pointer}
+#row{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px;min-height:36px}
+#cap{font-size:14px;letter-spacing:.04em}
+button{font:inherit;font-size:12px;color:var(--ink);background:var(--btn);border:1px solid var(--line);border-radius:999px;padding:8px 14px;cursor:pointer;transition:border-color .15s,color .15s}
+button:hover,button:active{border-color:var(--accent);color:var(--accent)}
+#installBtn{display:none;border-color:rgba(255,143,192,.45);color:#ff8fc0}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c" aria-label="A daisy to pluck petals from"></canvas>
+  <div id="row">
+    <span id="cap">Tap a petal to pluck it</span>
+    <button id="again" type="button">New daisy</button>
+    <button id="installBtn" type="button">Install App</button>
+  </div>
+</div>
+<script>
+// ---------- PWA Setup (Manifest, Icon, Offline Service Worker) ----------
+(() => {
+  // Generate Pixel Daisy SVG Icon
+  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+    <rect width="16" height="16" fill="#060b45"/>
+    <rect x="7" y="2" width="2" height="4" fill="#eef3ff"/>
+    <rect x="7" y="10" width="2" height="4" fill="#eef3ff"/>
+    <rect x="2" y="7" width="4" height="2" fill="#eef3ff"/>
+    <rect x="10" y="7" width="4" height="2" fill="#eef3ff"/>
+    <rect x="4" y="4" width="2" height="2" fill="#dfe9fb"/>
+    <rect x="10" y="4" width="2" height="2" fill="#dfe9fb"/>
+    <rect x="4" y="10" width="2" height="2" fill="#dfe9fb"/>
+    <rect x="10" y="10" width="2" height="2" fill="#dfe9fb"/>
+    <rect x="6" y="6" width="4" height="4" fill="#f29a2e"/>
+    <rect x="7" y="7" width="2" height="2" fill="#ffc65a"/>
+  </svg>`;
+  const iconUrl = 'data:image/svg+xml;base64,' + btoa(svgIcon);
+
+  // Set Apple Touch Icon
+  const appleLink = document.createElement('link');
+  appleLink.rel = 'apple-touch-icon';
+  appleLink.href = iconUrl;
+  document.head.appendChild(appleLink);
+
+  // Create Dynamic Web Manifest
+  const manifest = {
+    name: 'Loves me, loves me not',
+    short_name: 'Loves Me',
+    description: 'A retro pixel-art daisy petal plucking game.',
+    start_url: location.href,
+    display: 'standalone',
+    orientation: 'portrait',
+    background_color: '#05060f',
+    theme_color: '#05060f',
+    icons: [
+      { src: iconUrl, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: iconUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }
+    ]
+  };
+  const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+  const manifestLink = document.createElement('link');
+  manifestLink.rel = 'manifest';
+  manifestLink.href = URL.createObjectURL(manifestBlob);
+  document.head.appendChild(manifestLink);
+
+  // Register Inline Service Worker for Offline Caching
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    const swCode = `
+      const CACHE = 'loves-me-pwa-v1';
+      self.addEventListener('install', e => {
+        e.waitUntil(caches.open(CACHE).then(c => c.addAll([self.location.href.split('#')[0]])).catch(() => {}));
+        self.skipWaiting();
+      });
+      self.addEventListener('activate', e => {
+        e.waitUntil(self.clients.claim());
+      });
+      self.addEventListener('fetch', e => {
+        if (e.request.method !== 'GET') return;
+        e.respondWith(
+          caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+            const copy = res.clone();
+            caches.open(CACHE).then(c => c.put(e.request, copy));
+            return res;
+          }).catch(() => cached))
+        );
+      });
+    `;
+    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+    navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(() => {});
+  }
+
+  // Handle Custom Install Prompt
+  let deferredPrompt;
+  const installBtn = document.getElementById('installBtn');
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBtn.style.display = 'inline-block';
+  });
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') installBtn.style.display = 'none';
+    deferredPrompt = null;
+  });
+  window.addEventListener('appinstalled', () => {
+    installBtn.style.display = 'none';
+  });
+})();
+
+// ---------- Core Game Engine ----------
+(() => {
+  const W = 150, H = 210, TAU = Math.PI * 2, CX = 75, CY = 92, R0 = 6;
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  const img = ctx.createImageData(W, H), buf = new Uint32Array(img.data.buffer), bg = new Uint32Array(W * H);
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const col = (h) => { const n = parseInt(h.slice(1), 16); return ((255 << 24) | ((n & 255) << 16) | (n & 65280) | (n >> 16)) >>> 0; };
+  const BAY = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+  const bay = (x, y) => (BAY[y & 3][x & 3] + .5) / 16;
+  let seed = 90210;
+  const rnd = () => { let t = (seed += 0x6D2B79F5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const bgSet = (x, y, c) => { if (x >= 0 && x < W && y >= 0 && y < H) bg[y * W + x] = c; };
+  const put = (x, y, c) => { x = Math.round(x); y = Math.round(y); if (x >= 0 && x < W && y >= 0 && y < H) buf[y * W + x] = c; };
+
+  function leaf(bx, by, ang, L, Wd) {
+    const ca = Math.cos(ang), sa = Math.sin(ang), Rr = Math.ceil(L + Wd + 2);
+    for (let dy = -Rr; dy <= Rr; dy++) for (let dx = -Rr; dx <= Rr; dx++) {
+      const u = dx * ca + dy * sa, v = -dx * sa + dy * ca;
+      if (u < 0 || u > L) continue;
+      const t = u / L, w = Wd * Math.sin(Math.PI * Math.pow(t, .8)), av = Math.abs(v);
+      if (av > w) continue;
+      let c = v > 0 ? '#2a8f38' : '#45b64b';
+      if (w - av < 1.1) c = '#1b6f2b'; else if (av < .6 && t > .1 && t < .9) c = '#8ee07a';
+      bgSet(Math.round(bx + dx), Math.round(by + dy), col(c));
+    }
+  }
+  function buildBg() {
+    seed = 90210;
+    const SKY = ['#060b45', '#0e1a7a', '#1a2bb0', '#3a3cc8', '#7a52cf', '#c47bd9'].map(col);
+    for (let y = 0; y < H; y++) {
+      const t = clamp(y / 168, 0, 1) * (SKY.length - 1), i = Math.min(SKY.length - 2, Math.floor(t)), f = t - i;
+      for (let x = 0; x < W; x++) bg[y * W + x] = bay(x, y) < f ? SKY[i + 1] : SKY[i];
+    }
+    const sc = ['#ffffff', '#cfe0ff', '#9fb8ff'].map(col);
+    for (let i = 0; i < 46; i++) {
+      const x = Math.floor(rnd() * W), y = Math.floor(rnd() * 130);
+      if (Math.hypot(x - 126, y - 42) < 28) continue;
+      bgSet(x, y, sc[Math.floor(rnd() * 3)]);
+      if (rnd() < .2) bgSet(x + 1, y, sc[2]);
+    }
+    const MX = 126, MY = 42;
+    for (let y = MY - 28; y <= MY + 28; y++) for (let x = MX - 28; x <= MX + 28; x++) {
+      const d = Math.hypot(x - MX, y - MY);
+      if (d <= 11) {
+        let c = '#f7e9a8';
+        if ((x - MX) + (y - MY) > 5 && ((x + y) & 1)) c = '#dccb86';
+        if (((x - MX + 4) ** 2 + (y - MY + 3) ** 2 < 5) || ((x - MX - 4) ** 2 + (y - MY - 4) ** 2 < 4)) c = '#e6d392';
+        bgSet(x, y, col(c));
+      } else if (d < 26) {
+        const p = (1 - (d - 11) / 15) * .6;
+        if (bay(x, y) < p) bgSet(x, y, col(d < 17 ? '#7f98ee' : '#4b63d2'));
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      const yb = Math.round(146 + 7 * Math.sin(x * .045 + 1.2) + 4 * Math.sin(x * .11));
+      const yf = Math.round(160 + 5 * Math.sin(x * .06 + 3) + 3 * Math.sin(x * .15));
+      for (let y = yb; y < H; y++) bg[y * W + x] = col(y - yb < 2 && bay(x, y) < .5 ? '#2a37b0' : '#18238f');
+      for (let y = yf; y < H; y++) bg[y * W + x] = col('#111a74');
+    }
+    const G = ['#2a7d32', '#2f8a38', '#256d2d', '#3a9e45', '#1b5522'].map(col);
+    for (let y = 176; y < H; y++) for (let x = 0; x < W; x++) {
+      const r = rnd();
+      bg[y * W + x] = r < .06 ? G[4] : r < .22 ? G[3] : r < .5 ? G[1] : r < .75 ? G[0] : G[2];
+    }
+    for (let x = 0; x < W; x++) { bgSet(x, 175, col('#46a84a')); bgSet(x, 176, col('#3a9e45')); }
+    for (let y = CY + 7; y < 180; y++) {
+      const x = Math.round(CX + (y - CY) * .025);
+      bgSet(x - 1, y, col('#6ed36e')); bgSet(x, y, col('#38a548')); bgSet(x + 1, y, col('#1f6e2b'));
+    }
+    leaf(CX - 1, 144, -2.45, 23, 6); leaf(CX + 1, 160, -.62, 21, 5.5);
+    for (let x = 0; x < W; x++) {
+      if (rnd() < .6) {
+        const h = 2 + Math.floor(rnd() * 6);
+        for (let k = 0; k <= h; k++) bgSet(x, 175 - k, col(k === h ? '#8ee07a' : k > h * .5 ? '#4fb44f' : '#2f8a38'));
+      }
+    }
+  }
+
+  const GL = {
+    L: ['X....', 'X....', 'X....', 'X....', 'X....', 'X....', 'XXXXX'], O: ['.XXX.', 'X...X', 'X...X', 'X...X', 'X...X', 'X...X', '.XXX.'],
+    V: ['X...X', 'X...X', 'X...X', 'X...X', 'X...X', '.X.X.', '..X..'], E: ['XXXXX', 'X....', 'X....', 'XXXX.', 'X....', 'X....', 'XXXXX'],
+    S: ['.XXXX', 'X....', 'X....', '.XXX.', '....X', '....X', 'XXXX.'], M: ['X...X', 'XX.XX', 'X.X.X', 'X.X.X', 'X...X', 'X...X', 'X...X'],
+    T: ['XXXXX', '..X..', '..X..', '..X..', '..X..', '..X..', '..X..'], N: ['X...X', 'XX..X', 'X.X.X', 'X..XX', 'X...X', 'X...X', 'X...X']
+  };
+  function drawText(str, y, sc, c, shadow) {
+    const adv = 5 * sc + sc, w = str.length * adv - sc, x0 = Math.round((W - w) / 2);
+    [[1, shadow], [0, c]].forEach(([off, cc]) => {
+      const cl = col(cc);
+      for (let i = 0; i < str.length; i++) {
+        const g = GL[str[i]]; if (!g) continue;
+        for (let r = 0; r < 7; r++) for (let q = 0; q < 5; q++) if (g[r][q] === 'X')
+          for (let a = 0; a < sc; a++) for (let b = 0; b < sc; b++) put(x0 + i * adv + q * sc + a + off, y + r * sc + b + off, cl);
+      }
+    });
+  }
+
+  const PC = { base: col('#eef3ff'), base2: col('#dfe9fb'), shade: col('#bcd1f2'), edge: col('#8aa9de'), rib: col('#ffffff') };
+  function drawPetal(px, py, a, r0, L, Wd, tint, fade) {
+    const ca = Math.cos(a), sa = Math.sin(a), Rr = Math.ceil(r0 + L + Wd + 2);
+    for (let dy = -Rr; dy <= Rr; dy++) for (let dx = -Rr; dx <= Rr; dx++) {
+      const u = dx * ca + dy * sa; if (u < r0 || u > r0 + L) continue;
+      const v = -dx * sa + dy * ca, t = (u - r0) / L, w = Wd * Math.sin(Math.PI * Math.pow(t, .75)) * (1 - .12 * t), av = Math.abs(v);
+      if (av > w) continue;
+      const X = Math.round(px + dx), Y = Math.round(py + dy);
+      if (fade && bay(X, Y) < fade) continue;
+      let c = tint ? PC.base2 : PC.base;
+      if (w - av < 1.15) c = PC.edge;
+      else if (t < .3 && ((X + Y) & 1)) c = PC.shade;
+      else if (av < .55 && t > .2 && t < .92) c = PC.rib;
+      else if (v > w * .4) c = PC.shade;
+      put(X, Y, c);
+    }
+  }
+  function drawCenter() {
+    for (let dy = -10; dy <= 10; dy++) for (let dx = -10; dx <= 10; dx++) {
+      const d = Math.hypot(dx, dy), X = CX + dx, Y = CY + dy;
+      if (d <= 8) {
+        let c = '#f29a2e';
+        if (dx + dy < -4) c = '#ffc65a'; else if (dx + dy > 5) c = '#c9741a';
+        if (d > 1.5 && (X + 2 * Y) % 3 === 0) c = '#a85a14';
+        put(X, Y, col(c));
+      } else if (d <= 9.6 && bay(X, Y) < .55) put(X, Y, col('#fff0c0'));
+    }
+  }
+
+  let petals = [], falls = [], plucked = 0, text = '', frames = 0;
+  const sparkles = [[28, 86], [64, 150], [104, 66], [20, 150], [88, 118], [136, 100]].map(([x, y], i) => ({ x, y, ph: i * 1.7 }));
+  const cap = document.getElementById('cap');
+
+  function newDaisy() {
+    const n = 9 + Math.floor(Math.random() * 5), off = Math.random() * TAU;
+    petals = []; falls = []; plucked = 0; text = '';
+    for (let i = 0; i < n; i++) petals.push({ a: off + i * TAU / n + (Math.random() - .5) * .12, L: 29 + Math.random() * 5, Wd: 5 + Math.random() * 1.3, tint: Math.random() < .3, alive: true });
+    cap.textContent = 'Tap a petal to pluck it';
+  }
+  function pluck(i) {
+    const p = petals[i]; p.alive = false; plucked++;
+    if (navigator.vibrate) navigator.vibrate(15);
+    falls.push({ x: CX + Math.cos(p.a) * R0, y: CY + Math.sin(p.a) * R0, a: p.a, L: p.L, Wd: p.Wd, tint: p.tint, vx: (Math.random() - .5) * .5, vy: -.45, spin: (Math.random() - .5) * .08, ph: Math.random() * TAU, age: 0, fade: 0 });
+    text = plucked % 2 ? 'LOVES ME' : 'LOVES ME NOT';
+    if (petals.every((q) => !q.alive)) cap.textContent = text === 'LOVES ME' ? 'It’s love! 💗' : 'Not this time…';
+    else cap.textContent = plucked + (plucked === 1 ? ' petal plucked' : ' petals plucked');
+  }
+  function hit(lx, ly) {
+    let best = -1, bs = 9;
+    petals.forEach((p, i) => {
+      if (!p.alive) return;
+      const dx = lx - CX, dy = ly - CY, ca = Math.cos(p.a), sa = Math.sin(p.a);
+      const u = dx * ca + dy * sa, v = -dx * sa + dy * ca;
+      if (u < 2 || u > R0 + p.L + 2) return;
+      const t = clamp((u - R0) / p.L, 0, 1), w = p.Wd * Math.sin(Math.PI * Math.pow(t, .75)) + 2.5, s = Math.abs(v) / w;
+      if (s <= 1 && s < bs) { bs = s; best = i; }
+    });
+    return best;
+  }
+
+  function frame() {
+    frames++;
+    buf.set(bg);
+    sparkles.forEach((s) => {
+      const k = Math.sin(frames * .05 + s.ph), c = col(k > .3 ? '#d6e4ff' : '#8fa6e8');
+      put(s.x, s.y, c);
+      if (k > .3) { const l = k > .8 ? 3 : 2; for (let i = 1; i <= l; i++) { put(s.x + i, s.y, c); put(s.x - i, s.y, c); put(s.x, s.y + i, c); put(s.x, s.y - i, c); } }
+    });
+    petals.forEach((p) => { if (p.alive) drawPetal(CX, CY, p.a, R0, p.L, p.Wd, p.tint, 0); });
+    drawCenter();
+    for (let i = falls.length - 1; i >= 0; i--) {
+      const f = falls[i]; f.age += .016;
+      if (f.y < 174) { f.vy = Math.min(.5, f.vy + .012); f.x += f.vx + Math.sin(f.age * 3 + f.ph) * .35; f.y += f.vy; f.a += f.spin; }
+      else f.fade += .02;
+      if (f.fade >= 1) { falls.splice(i, 1); continue; }
+      drawPetal(f.x, f.y, f.a, 0, f.L * .85, f.Wd * .9, f.tint, f.fade);
+    }
+    if (text) { if (text === 'LOVES ME') drawText(text, 12, 2, '#ff8fc0', '#7a2552'); else drawText(text, 12, 2, '#a9bcff', '#2a3a8a'); }
+    ctx.putImageData(img, 0, 0);
+    requestAnimationFrame(frame);
+  }
+
+  function fit() {
+    let s = Math.min((window.innerWidth - 24) / W, (window.innerHeight - 120) / H);
+    if (s >= 2) s = Math.floor(s);
+    cv.style.width = Math.round(W * s) + 'px'; cv.style.height = Math.round(H * s) + 'px';
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    const r = cv.getBoundingClientRect(), i = hit((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H);
+    if (i >= 0) pluck(i);
+  });
+  document.getElementById('again').onclick = newDaisy;
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.key === 'Enter') {
+      e.preventDefault();
+      const alive = petals.map((p, i) => p.alive ? i : -1).filter((i) => i >= 0);
+      if (alive.length) pluck(alive[Math.floor(Math.random() * alive.length)]);
+    } else if (e.key === 'r' || e.key === 'R') newDaisy();
+  });
+  window.addEventListener('resize', fit);
+
+  buildBg(); newDaisy(); fit();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
